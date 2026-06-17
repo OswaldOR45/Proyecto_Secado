@@ -1,0 +1,15 @@
+@"
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Salidas generadas
+salida/
+guia_operador.html
+guia_operador.md
+"@ | Out-File -Encoding utf8 .gitignore
