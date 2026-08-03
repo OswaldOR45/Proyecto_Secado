@@ -22,14 +22,14 @@ _CSS = """
 :root {
   --bg:          #121212;
   --bg-card:    #1e1e1e;
-  
+
   --ink:         #e0e0e0;
   --ink-soft:    #a0a0a0;
   --ink-muted:   #757575;
-  
+
   --rule:        #333333;
   --rule-soft:   #252525;
-  
+
   --amber:       #ff9800;
   --amber-soft:  #3e2715;
   --teal:        #4fc3f7;
@@ -40,7 +40,7 @@ _CSS = """
   --mustard-soft:#332b10;
   --rust:        #e57373;
   --rust-soft:   #3a1c1c;
-  
+
   --display: "Inter", -apple-system, "Segoe UI", sans-serif;
   --body:    "Inter", -apple-system, "Segoe UI", sans-serif;
   --mono:    "JetBrains Mono", "IBM Plex Mono", Consolas, monospace;
@@ -248,6 +248,13 @@ body {
   font-family: var(--mono);
   font-size: 18px;
   color: var(--ink);
+}
+.stat-value.stat-warn {
+  color: var(--rust);
+}
+.stat-value.stat-warn::after {
+  content: " ⚠";
+  font-size: 13px;
 }
 
 /* ---- Tarjeta de arranque por producto ---- */
@@ -512,7 +519,6 @@ body {
   .regla-line { grid-template-columns: 90px 1fr; }
 }
 """
-
 # =================================================================================
 #  Helpers de formato HTML
 # =================================================================================
@@ -553,6 +559,7 @@ def _clase_alerta(a: str) -> str:
 
 _MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
              "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
 
 def _fecha_es(d: dt.date | None = None) -> str:
     d = d or dt.date.today()
@@ -617,7 +624,7 @@ def _resumen_lineas(df: pd.DataFrame) -> str:
         prog_class = "" if pct >= 60 else ("med" if pct >= 35 else "bad")
         cards.append(f"""
 <div class="linea-card">
-  <div class="badge">Línea {_e(row["Linea"].replace("L",""))}</div>
+  <div class="badge">Línea {_e(row["Linea"].replace("L", ""))}</div>
   <h3>Comportamiento general</h3>
   <div class="linea-progress">
     <div class="linea-progress-bar">
@@ -729,6 +736,51 @@ def _producto_card(r) -> str:
     rate_txt = _fmt_num(a.get("rate")) + (" kg/h" if a.get("rate") else "")
     agua_txt = _fmt_num(a.get("agua_termo"))
 
+    # --- Comparacion Esperado (teorico, con la config sugerida) vs Real (obtenido) ---
+    # Esperado = mediana de las corridas EN RANGO (misma base que zonas/rate/agua).
+    # Real = promedio de TODAS las corridas registradas para este producto x linea.
+    # El delta muestra que tanto se aleja lo real de lo esperado, para decidir
+    # el siguiente micro-ajuste.
+    hum_esp = a.get("humedad")
+    aw_esp = a.get("aw")
+    hum_real = r.humedad_prom if not (isinstance(r.humedad_prom, float) and math.isnan(r.humedad_prom)) else None
+    aw_real = r.aw_prom if not (isinstance(r.aw_prom, float) and math.isnan(r.aw_prom)) else None
+
+    def _fuera_rango_h(v):
+        return v is not None and not (config.HUMEDAD_MIN <= v <= config.HUMEDAD_MAX)
+
+    def _fuera_rango_aw(v):
+        return v is not None and not (config.AW_MIN_IDONEO <= v <= config.AW_MAX_IDONEO)
+
+    def _delta_cls(delta, umbral):
+        if delta is None:
+            return ""
+        if abs(delta) >= umbral:
+            return " comp-delta-alto"
+        if abs(delta) >= umbral * 0.4:
+            return " comp-delta-medio"
+        return " comp-delta-bajo"
+
+    hum_delta = (hum_real - hum_esp) if (hum_real is not None and hum_esp is not None) else None
+    aw_delta = (aw_real - aw_esp) if (aw_real is not None and aw_esp is not None) else None
+
+    comp_filas = []
+    comp_filas.append(f"""
+    <div class="comp-row">
+      <div class="comp-label">Humedad</div>
+      <div class="comp-val"><span class="comp-tag">Esperado</span><span class="comp-num{' stat-warn' if _fuera_rango_h(hum_esp) else ''}">{hum_esp:.2f}%</span></div>
+      <div class="comp-val"><span class="comp-tag">Real</span><span class="comp-num{' stat-warn' if _fuera_rango_h(hum_real) else ''}">{f'{hum_real:.2f}%' if hum_real is not None else 'n/d'}</span></div>
+      <div class="comp-val comp-delta{_delta_cls(hum_delta, 0.3)}"><span class="comp-tag">&Delta;</span><span class="comp-num">{f'{hum_delta:+.2f}%' if hum_delta is not None else 'n/d'}</span></div>
+    </div>""" if hum_esp is not None else "")
+    comp_filas.append(f"""
+    <div class="comp-row">
+      <div class="comp-label">AW</div>
+      <div class="comp-val"><span class="comp-tag">Esperado</span><span class="comp-num{' stat-warn' if _fuera_rango_aw(aw_esp) else ''}">{aw_esp:.4f}</span></div>
+      <div class="comp-val"><span class="comp-tag">Real</span><span class="comp-num{' stat-warn' if _fuera_rango_aw(aw_real) else ''}">{f'{aw_real:.4f}' if aw_real is not None else 'n/d'}</span></div>
+      <div class="comp-val comp-delta{_delta_cls(aw_delta, 0.018)}"><span class="comp-tag">&Delta;</span><span class="comp-num">{f'{aw_delta:+.4f}' if aw_delta is not None else 'n/d'}</span></div>
+    </div>""" if aw_esp is not None else "")
+    comparacion_block = "".join(f for f in comp_filas if f)
+
     aviso_si_orientativo = ""
     if r.n_en_rango == 0:
         aviso_si_orientativo = (
@@ -742,7 +794,7 @@ def _producto_card(r) -> str:
 <article class="producto-card conf-{conf_class}">
   <div class="prod-head">
     <h3 class="prod-name">{_e(r.producto)}</h3>
-    <span class="prod-linea-pill">Línea {_e(r.linea.replace("L",""))}</span>
+    <span class="prod-linea-pill">Línea {_e(r.linea.replace("L", ""))}</span>
   </div>
   <div class="prod-meta">
     <span><b>{r.n_total}</b> corridas</span>
@@ -759,6 +811,14 @@ def _producto_card(r) -> str:
     <div>
       <div class="stat-label">Agua Termo</div>
       <div class="stat-value">{_e(agua_txt)}</div>
+    </div>
+    <div>
+      <div class="stat-label">Humedad esperada</div>
+      <div class="stat-value{hum_esp_cls}">{_e(hum_esp_txt)}</div>
+    </div>
+    <div>
+      <div class="stat-label">AW esperada</div>
+      <div class="stat-value{aw_esp_cls}">{_e(aw_esp_txt)}</div>
     </div>
   </div>
   <div class="reglas">
@@ -809,7 +869,7 @@ def _ambientales(df: pd.DataFrame) -> str:
             rows = "".join(rows_list)
         cards.append(f"""
 <div class="amb-card">
-  <h3>Línea {_e(linea.replace("L",""))}</h3>
+  <h3>Línea {_e(linea.replace("L", ""))}</h3>
   <table class="amb-table">
     <thead>
       <tr><th>Condición</th><th>Humedad obs.</th><th>Ajuste preventivo</th><th>Alerta</th></tr>
