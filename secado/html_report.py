@@ -519,6 +519,8 @@ body {
   .regla-line { grid-template-columns: 90px 1fr; }
 }
 """
+
+
 # =================================================================================
 #  Helpers de formato HTML
 # =================================================================================
@@ -684,7 +686,7 @@ def _producto_card(r) -> str:
     a = r.arranque
     conf_class = _clase_confiabilidad(r.confiabilidad)
 
-    # zonas: marca la zona clave con clase especial
+    # Zonas
     zonas_html = []
     for z in config.ZONAS:
         clave = " clave" if z == r.zona_clave else ""
@@ -696,7 +698,7 @@ def _producto_card(r) -> str:
     </div>""")
     zonas_block = "".join(zonas_html)
 
-    # reglas: separar los tipos para presentarlos con tag
+    # Reglas
     reglas_html = []
     for regla in r.reglas:
         cls, tag, txt = "", "", regla
@@ -720,7 +722,7 @@ def _producto_card(r) -> str:
             f'<span>{_e(txt)}</span></div>'
         )
 
-    # correlaciones strip
+    # Correlaciones
     corr_items = []
     for z in config.ZONAS:
         c = r.correlaciones.get(z)
@@ -736,50 +738,11 @@ def _producto_card(r) -> str:
     rate_txt = _fmt_num(a.get("rate")) + (" kg/h" if a.get("rate") else "")
     agua_txt = _fmt_num(a.get("agua_termo"))
 
-    # --- Comparacion Esperado (teorico, con la config sugerida) vs Real (obtenido) ---
-    # Esperado = mediana de las corridas EN RANGO (misma base que zonas/rate/agua).
-    # Real = promedio de TODAS las corridas registradas para este producto x linea.
-    # El delta muestra que tanto se aleja lo real de lo esperado, para decidir
-    # el siguiente micro-ajuste.
-    hum_esp = a.get("humedad")
-    aw_esp = a.get("aw")
-    hum_real = r.humedad_prom if not (isinstance(r.humedad_prom, float) and math.isnan(r.humedad_prom)) else None
-    aw_real = r.aw_prom if not (isinstance(r.aw_prom, float) and math.isnan(r.aw_prom)) else None
-
-    def _fuera_rango_h(v):
-        return v is not None and not (config.HUMEDAD_MIN <= v <= config.HUMEDAD_MAX)
-
-    def _fuera_rango_aw(v):
-        return v is not None and not (config.AW_MIN_IDONEO <= v <= config.AW_MAX_IDONEO)
-
-    def _delta_cls(delta, umbral):
-        if delta is None:
-            return ""
-        if abs(delta) >= umbral:
-            return " comp-delta-alto"
-        if abs(delta) >= umbral * 0.4:
-            return " comp-delta-medio"
-        return " comp-delta-bajo"
-
-    hum_delta = (hum_real - hum_esp) if (hum_real is not None and hum_esp is not None) else None
-    aw_delta = (aw_real - aw_esp) if (aw_real is not None and aw_esp is not None) else None
-
-    comp_filas = []
-    comp_filas.append(f"""
-    <div class="comp-row">
-      <div class="comp-label">Humedad</div>
-      <div class="comp-val"><span class="comp-tag">Esperado</span><span class="comp-num{' stat-warn' if _fuera_rango_h(hum_esp) else ''}">{hum_esp:.2f}%</span></div>
-      <div class="comp-val"><span class="comp-tag">Real</span><span class="comp-num{' stat-warn' if _fuera_rango_h(hum_real) else ''}">{f'{hum_real:.2f}%' if hum_real is not None else 'n/d'}</span></div>
-      <div class="comp-val comp-delta{_delta_cls(hum_delta, 0.3)}"><span class="comp-tag">&Delta;</span><span class="comp-num">{f'{hum_delta:+.2f}%' if hum_delta is not None else 'n/d'}</span></div>
-    </div>""" if hum_esp is not None else "")
-    comp_filas.append(f"""
-    <div class="comp-row">
-      <div class="comp-label">AW</div>
-      <div class="comp-val"><span class="comp-tag">Esperado</span><span class="comp-num{' stat-warn' if _fuera_rango_aw(aw_esp) else ''}">{aw_esp:.4f}</span></div>
-      <div class="comp-val"><span class="comp-tag">Real</span><span class="comp-num{' stat-warn' if _fuera_rango_aw(aw_real) else ''}">{f'{aw_real:.4f}' if aw_real is not None else 'n/d'}</span></div>
-      <div class="comp-val comp-delta{_delta_cls(aw_delta, 0.018)}"><span class="comp-tag">&Delta;</span><span class="comp-num">{f'{aw_delta:+.4f}' if aw_delta is not None else 'n/d'}</span></div>
-    </div>""" if aw_esp is not None else "")
-    comparacion_block = "".join(f for f in comp_filas if f)
+    # Metas esperadas
+    hum_esp_txt = f"{config.HUMEDAD_OBJ:.2f}%"
+    aw_esp_txt = f"{(config.AW_MIN_IDONEO + config.AW_MAX_IDONEO) / 2:.4f}"
+    hum_esp_cls = ""
+    aw_esp_cls = ""
 
     aviso_si_orientativo = ""
     if r.n_en_rango == 0:
@@ -830,7 +793,6 @@ def _producto_card(r) -> str:
     <span>{" ".join(corr_items)}</span>
   </div>
 </article>"""
-
 
 def _productos(df: pd.DataFrame) -> str:
     cards = []
@@ -929,6 +891,7 @@ def generar_html(df: pd.DataFrame, avisos: list[str]) -> str:
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>{_CSS}</style>
 </head>
 <body>
