@@ -189,6 +189,15 @@ def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> Resul
     agua_med = base["agua_termo"].median()
     arranque["agua_termo"] = None if pd.isna(agua_med) else round(agua_med)
 
+    # Valores esperados con ESTA configuracion: mediana de humedad y AW,
+    # calculada sobre la misma base que las zonas/rate/agua (en_rango si hay,
+    # si no toda la muestra). Asi el numero es consistente con el resto de la
+    # tarjeta de arranque, y no se contamina con corridas fuera de rango.
+    hum_med = base["humedad"].median()
+    arranque["humedad"] = None if pd.isna(hum_med) else round(hum_med, 2)
+    aw_med = base["aw"].median()
+    arranque["aw"] = None if pd.isna(aw_med) else round(aw_med, 4)
+
     corr = _correlaciones_zona(g)
     sens = _sensibilidad_zona(g)
     zona_clave, _ = elegir_zona_clave(corr)
