@@ -65,6 +65,55 @@ AJUSTE_AMB_CAP       = 12.0   # tope absoluto del ajuste ambiental sugerido (C)
 MIN_N_CONDICION      = 2      # registros minimos por condicion para sugerir numero
 
 
+# --- Sesgo hacia humedad alta dentro de la meta (vender agua, no materia prima) ---
+# Dentro de las corridas que YA cumplen humedad+AW, se prefiere la mitad con
+# humedad mas alta para armar la receta de arranque (mismo AW, mas agua vendida).
+# Si esa mitad se queda muy chica, se usa la base completa (no se sacrifica
+# confiabilidad por sesgar el numero).
+MIN_N_SESGO_HUMEDAD_ALTA = 3
+
+# Piso de muestra para que un rango tipico (P25-P75) de rate/agua_termo sea
+# estadisticamente estable. Con menos puntos, el "rango" son casi los mismos
+# 2-3 numeros -- se amplia a una base mayor en vez de mostrar algo inestable.
+MIN_N_RANGO_CONFIABLE = 5
+
+# --- Modelo multivariante (zona clave + rate + agua_termo) -----------------------
+# Separa el efecto de la zona del efecto del rate/agua_termo, que el operador
+# suele mover a la vez (compensacion manual) y que si no se separan, sesgan la
+# sensibilidad simple de una sola variable. Requiere suficientes grados de
+# libertad y un ajuste minimamente razonable (R2) para reportarse; si no,
+# se omite en vez de dar un numero inventado.
+MIN_N_MULTIVARIANTE = 12      # ~4x los 3 predictores (zona, rate, agua_termo)
+R2_MIN_MULTIVARIANTE = 0.25   # bajo esto, el modelo no explica lo suficiente
+RATE_PASO_COMPENSACION = 500  # kg/h, unidad en la que se reporta la compensacion
+AGUA_PASO_COMPENSACION = 50   # kg/h, unidad en la que se reporta el efecto del agua
+COMP_RATE_MIN_DEG = 0.3       # tope piso: C de zona por cada 500kg/h de rate
+COMP_RATE_MAX_DEG = 20.0      # tope techo: si sale fuera, no se reporta (no se recorta)
+
+# --- Sensibilidad de AW a la zona (analoga a la de humedad, otra escala) ---------
+# AW se mueve en centesimas (rango util ~0.06), no en unidades enteras como la
+# humedad (rango util ~1.0). Se expresa "C por punto de AW" (punto = 0.01).
+AW_SENS_MIN_POR_PUNTO = 5.0
+AW_SENS_MAX_POR_PUNTO = 60.0
+
+# --- Correccion automatica de la receta cuando el esperado sale fuera de meta ----
+# Margen de seguridad: al corregir, no se apunta justo al limite sino un poco
+# adentro, para no quedar al filo por variabilidad normal del proceso.
+MARGEN_HUMEDAD_CORRECCION = 0.15   # puntos de %
+MARGEN_AW_CORRECCION = 0.005       # unidades absolutas de AW
+# Tope de sensatez: si el ajuste que pide el modelo lineal supera esto, el gap
+# es demasiado grande para extrapolar con una sensibilidad local (el modelo
+# es lineal solo cerca de los datos que lo alimentaron) -- se reporta como no
+# confiable en vez de sugerir un salto de zona fisicamente absurdo.
+CORRECCION_ZONA_MAX_DEG = 20.0
+
+# --- Modelo ambiental continuo (temp_amb + hr) ------------------------------------
+# Complementa la tabla de baldes (Dia frio / normal / caluroso...) con una
+# sensibilidad continua cuando hay datos suficientes para sostenerla.
+MIN_N_AMBIENTAL = 10
+R2_MIN_AMBIENTAL = 0.15   # umbral mas bajo que el multivariante: solo 2 predictores
+
+
 # --- Umbrales de confiabilidad por # de corridas EN RANGO ------------------------
 # Estos umbrales se usan para etiquetar la fiabilidad de la tabla de arranque.
 # Recomendado para validacion: 30 EN RANGO por producto y linea (suficiente para Cpk).

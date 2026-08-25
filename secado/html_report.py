@@ -256,6 +256,35 @@ body {
   content: " ⚠";
   font-size: 13px;
 }
+.stat-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-muted);
+  margin-top: 3px;
+}
+
+.rate-hint {
+  margin: 0 26px 16px;
+  padding: 10px 14px;
+  background: var(--bg-card-alt, #1c1c1c);
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.rate-hint-label {
+  color: var(--ink-muted);
+  margin-right: 4px;
+}
+.rate-hint-tag {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
 
 /* ---- Tarjeta de arranque por producto ---- */
 .producto-grid {
@@ -408,6 +437,57 @@ body {
   border-bottom: 0;
 }
 
+.correccion-box {
+  margin: 0 26px 16px;
+  border: 1px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.correccion-box.correccion-sin-modelo {
+  border-color: var(--mustard);
+  background: var(--mustard-soft);
+}
+.correccion-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--amber);
+  padding: 10px 14px 0;
+}
+.correccion-pill {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  background: rgba(255,152,0,0.16);
+  border: 1px solid var(--amber);
+  border-radius: 20px;
+  padding: 2px 8px;
+  color: var(--ink);
+}
+.correccion-body {
+  padding: 8px 14px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.correccion-conflicto, .corr-conflicto {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--rust);
+}
+.correccion-proyeccion {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255,152,0,0.35);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
 .corr-strip {
   padding: 12px 26px 20px;
   display: flex;
@@ -466,6 +546,14 @@ body {
 .amb-alert.ok      { background: var(--sage-soft);    color: var(--sage); }
 .amb-alert.monitorear { background: var(--mustard-soft); color: var(--mustard); }
 .amb-alert.critico { background: var(--rust-soft);    color: var(--rust); }
+.amb-modelo-nota {
+  padding: 10px 4px 2px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--ink-muted);
+  border-top: 1px dashed var(--rule);
+  margin-top: 10px;
+}
 
 /* ---- Avisos ---- */
 .avisos {
@@ -686,7 +774,7 @@ def _producto_card(r) -> str:
     a = r.arranque
     conf_class = _clase_confiabilidad(r.confiabilidad)
 
-    # Zonas
+    # zonas: marca la zona clave con clase especial
     zonas_html = []
     for z in config.ZONAS:
         clave = " clave" if z == r.zona_clave else ""
@@ -698,7 +786,7 @@ def _producto_card(r) -> str:
     </div>""")
     zonas_block = "".join(zonas_html)
 
-    # Reglas
+    # reglas: separar los tipos para presentarlos con tag
     reglas_html = []
     for regla in r.reglas:
         cls, tag, txt = "", "", regla
@@ -714,6 +802,10 @@ def _producto_card(r) -> str:
             cls, tag, txt = "aviso", "Aviso", regla[len("AVISO:"):].strip()
         elif regla.startswith("APOYO:"):
             tag, txt = "Apoyo", regla[len("APOYO:"):].strip()
+        elif regla.startswith("RATE:"):
+            tag, txt = "Rate", regla[len("RATE:"):].strip()
+        elif regla.startswith("AGUA TERMO:"):
+            tag, txt = "Agua termo", regla[len("AGUA TERMO:"):].strip()
         elif regla.startswith("REGLA DE ORO:"):
             tag, txt = "Regla de oro", regla[len("REGLA DE ORO:"):].strip()
         line_cls = " aviso" if cls == "aviso" else ""
@@ -722,7 +814,7 @@ def _producto_card(r) -> str:
             f'<span>{_e(txt)}</span></div>'
         )
 
-    # Correlaciones
+    # correlaciones strip
     corr_items = []
     for z in config.ZONAS:
         c = r.correlaciones.get(z)
@@ -735,23 +827,83 @@ def _producto_card(r) -> str:
                 f'<span class="corr-val {sign_cls}">{c:+.2f}</span></span>'
             )
 
-    rate_txt = _fmt_num(a.get("rate")) + (" kg/h" if a.get("rate") else "")
-    agua_txt = _fmt_num(a.get("agua_termo"))
+    rate_lo, rate_hi = r.rate_rango
+    agua_lo, agua_hi = r.agua_rango
+    rate_txt = "n/d" if rate_lo is None else f"{rate_lo:,}–{rate_hi:,} kg/h"
+    agua_txt = "n/d" if agua_lo is None else f"{agua_lo}–{agua_hi}"
+    rate_sub = "" if rate_lo is None else f"n={r.rate_rango_n} · {r.rate_rango_fuente}"
+    agua_sub = "" if agua_lo is None else f"n={r.agua_rango_n} · {r.agua_rango_fuente}"
 
-    # Metas esperadas
-    hum_esp_txt = f"{config.HUMEDAD_OBJ:.2f}%"
-    aw_esp_txt = f"{(config.AW_MIN_IDONEO + config.AW_MAX_IDONEO) / 2:.4f}"
-    hum_esp_cls = ""
-    aw_esp_cls = ""
+    # Valores esperados con esta configuracion (mediana, misma base que el arranque)
+    hum_esp = a.get("humedad")
+    aw_esp = a.get("aw")
+    hum_esp_txt = f"{hum_esp:.2f}%" if hum_esp is not None else "n/d"
+    aw_esp_txt = f"{aw_esp:.4f}" if aw_esp is not None else "n/d"
+    hum_fuera_rango = (
+            hum_esp is not None and
+            not (config.HUMEDAD_MIN <= hum_esp <= config.HUMEDAD_MAX)
+    )
+    aw_fuera_rango = (
+            aw_esp is not None and
+            not (config.AW_MIN_IDONEO <= aw_esp <= config.AW_MAX_IDONEO)
+    )
+    hum_esp_cls = " stat-warn" if hum_fuera_rango else ""
+    aw_esp_cls = " stat-warn" if aw_fuera_rango else ""
 
     aviso_si_orientativo = ""
-    if r.n_en_rango == 0:
+    if r.n_calidad_total == 0 and r.n_en_rango == 0:
         aviso_si_orientativo = (
             '<div class="regla-line aviso">'
             '<span class="regla-tag aviso">Orientativo</span>'
-            '<span>Sin corridas en rango aún; estos valores son punto de partida, no recomendación firme.</span>'
+            '<span>Sin corridas en meta aún; estos valores son punto de partida, no recomendación firme.</span>'
             '</div>'
         )
+    elif r.n_calidad_total == 0:
+        aviso_si_orientativo = (
+            '<div class="regla-line aviso">'
+            '<span class="regla-tag aviso">Solo humedad</span>'
+            '<span>Ninguna corrida cumplió humedad Y AW a la vez; esta receta solo está validada para humedad.</span>'
+            '</div>'
+        )
+
+    rate_zona_hint_block = ""
+    if r.rate_zona_hint is not None:
+        h = r.rate_zona_hint
+        rate_zona_hint_block = f"""
+  <div class="rate-hint">
+    <span class="rate-hint-label">Rate variable dentro de la corrida:</span>
+    si corres cerca de <b>{h['rate_lo']:,} kg/h</b>, {_e(config.ZONA_NOMBRE[r.zona_clave])} ≈ <b>{h['zona_lo']}°C</b>;
+    si corres cerca de <b>{h['rate_hi']:,} kg/h</b>, ≈ <b>{h['zona_hi']}°C</b>
+    <span class="rate-hint-tag">proyectado con el modelo de rate</span>
+  </div>"""
+
+    correccion_block = ""
+    if r.correccion is not None:
+        c = r.correccion
+        if c.get("delta_c") is not None:
+            conflicto_txt = (
+                '<div class="corr-conflicto">⚠ Humedad y AW pedían sentidos opuestos — se priorizó AW.</div>'
+                if c["conflicto"] else ""
+            )
+            correccion_block = f"""
+  <div class="correccion-box">
+    <div class="correccion-head">Receta ajustada <span class="correccion-pill">proyección, no validada</span></div>
+    <div class="correccion-body">
+      {c['direccion']} <b>{_e(c['zona_nombre'])}</b> de <b>{c['valor_original']}</b> a
+      <b>{c['valor_corregido']}</b> ({c['delta_c']:+.1f}°C) — criterio: {_e(c['criterio'])}
+      {conflicto_txt}
+      <div class="correccion-proyeccion">
+        Con este ajuste se proyecta: Humedad ≈ <b>{c['humedad_proyectada']}%</b> ·
+        AW ≈ <b>{c['aw_proyectada']}</b>
+      </div>
+    </div>
+  </div>"""
+        else:
+            correccion_block = f"""
+  <div class="correccion-box correccion-sin-modelo">
+    <div class="correccion-head">Esperado fuera de meta</div>
+    <div class="correccion-body">{_e(c['motivo'])}</div>
+  </div>"""
 
     return f"""
 <article class="producto-card conf-{conf_class}">
@@ -761,19 +913,22 @@ def _producto_card(r) -> str:
   </div>
   <div class="prod-meta">
     <span><b>{r.n_total}</b> corridas</span>
-    <span><b>{r.n_en_rango}</b> en rango</span>
+    <span><b>{r.n_en_rango}</b> en rango humedad</span>
+    <span><b>{r.n_calidad_total}</b> en meta (humedad+AW)</span>
     <span>H: <b>{r.humedad_prom:.2f}%</b> · σ <b>{r.humedad_std:.2f}</b></span>
     <span class="conf-tag {conf_class}">{_e(r.confiabilidad)}</span>
   </div>
   <div class="zonas">{zonas_block}</div>
   <div class="prod-secondary">
     <div>
-      <div class="stat-label">Rate</div>
+      <div class="stat-label">Rate (rango típico)</div>
       <div class="stat-value">{_e(rate_txt)}</div>
+      <div class="stat-sub">{_e(rate_sub)}</div>
     </div>
     <div>
-      <div class="stat-label">Agua Termo</div>
+      <div class="stat-label">Agua Termo (rango típico)</div>
       <div class="stat-value">{_e(agua_txt)}</div>
+      <div class="stat-sub">{_e(agua_sub)}</div>
     </div>
     <div>
       <div class="stat-label">Humedad esperada</div>
@@ -784,6 +939,8 @@ def _producto_card(r) -> str:
       <div class="stat-value{aw_esp_cls}">{_e(aw_esp_txt)}</div>
     </div>
   </div>
+  {rate_zona_hint_block}
+  {correccion_block}
   <div class="reglas">
     {aviso_si_orientativo}
     {"".join(reglas_html)}
@@ -793,6 +950,7 @@ def _producto_card(r) -> str:
     <span>{" ".join(corr_items)}</span>
   </div>
 </article>"""
+
 
 def _productos(df: pd.DataFrame) -> str:
     cards = []
@@ -815,29 +973,47 @@ def _ambientales(df: pd.DataFrame) -> str:
     cards = []
     for linea in sorted(df["linea"].unique()):
         amb = ajustes_ambientales(df, linea)
-        if len(amb) == 0:
-            rows = '<tr><td colspan="4" style="color:var(--ink-muted)">Sin datos ambientales suficientes</td></tr>'
+        tabla = amb["tabla"]
+        if len(tabla) == 0:
+            rows = '<tr><td colspan="5" style="color:var(--ink-muted)">Sin datos ambientales suficientes</td></tr>'
         else:
             rows_list = []
-            for _, row in amb.iterrows():
-                alert_cls = _clase_alerta(row["Alerta"])
+            for _, row in tabla.iterrows():
+                alert_cls = _clase_alerta(row["Alerta Humedad"])
+                alert_cls_aw = _clase_alerta(row["Alerta AW"])
                 rows_list.append(f"""
     <tr>
       <td class="amb-cond">{_e(row["Condicion"])} <span style="color:var(--ink-muted)">· n={int(row["n"])}</span></td>
-      <td class="amb-h">{row["Humedad prom (%)"]:.2f}%</td>
+      <td class="amb-h">{row["Humedad prom (%)"]:.2f}% <span class="amb-alert {alert_cls}">{_e(row["Alerta Humedad"])}</span></td>
+      <td class="amb-h">{row["AW prom"]:.4f} <span class="amb-alert {alert_cls_aw}">{_e(row["Alerta AW"])}</span></td>
       <td class="amb-aj">{_e(row["Ajuste recomendado"])}</td>
-      <td><span class="amb-alert {alert_cls}">{_e(row["Alerta"])}</span></td>
     </tr>""")
             rows = "".join(rows_list)
+        nota_modelo = ""
+        mh, maw = amb["modelo_humedad"], amb["modelo_aw"]
+        if mh is not None or maw is not None:
+            partes = []
+            if mh is not None:
+                partes.append(
+                    f"Humedad: {mh['coefs']['temp_amb']:+.3f}%/°C · "
+                    f"{mh['coefs']['hr'] * 10:+.3f}%/10%HR (R²={mh['r2']}, n={mh['n']})"
+                )
+            if maw is not None:
+                partes.append(
+                    f"AW: {maw['coefs']['temp_amb'] * 100:+.3f}pts/°C · "
+                    f"{maw['coefs']['hr'] * 1000:+.3f}pts/10%HR (R²={maw['r2']}, n={maw['n']})"
+                )
+            nota_modelo = f'<div class="amb-modelo-nota">Sensibilidad continua (modelo temp_amb + HR) — {" · ".join(partes)}</div>'
         cards.append(f"""
 <div class="amb-card">
   <h3>Línea {_e(linea.replace("L", ""))}</h3>
   <table class="amb-table">
     <thead>
-      <tr><th>Condición</th><th>Humedad obs.</th><th>Ajuste preventivo</th><th>Alerta</th></tr>
+      <tr><th>Condición</th><th>Humedad obs.</th><th>AW obs.</th><th>Ajuste preventivo ({_e(amb['zona_nombre'])})</th></tr>
     </thead>
     <tbody>{rows}</tbody>
   </table>
+  {nota_modelo}
 </div>""")
     return f"""
 <section class="section">
@@ -891,7 +1067,6 @@ def generar_html(df: pd.DataFrame, avisos: list[str]) -> str:
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>{_CSS}</style>
 </head>
 <body>

@@ -11,12 +11,19 @@ from .analysis import (
 )
 
 
-def _fmt_arranque(a: dict) -> str:
+def _fmt_arranque(a: dict, rate_rango: tuple, agua_rango: tuple,
+                   rate_n: int = None, rate_fuente: str = None,
+                   agua_n: int = None, agua_fuente: str = None) -> str:
     z = lambda k: ("--" if a.get(k) is None else f"{a[k]}")
-    rate = "--" if a.get("rate") is None else f"{a['rate']:,}"
-    agua = "--" if a.get("agua_termo") is None else f"{a['agua_termo']}"
+    r_lo, r_hi = rate_rango
+    a_lo, a_hi = agua_rango
+    rate_txt = "--" if r_lo is None else f"{r_lo:,}-{r_hi:,} kg/h (n={rate_n}, {rate_fuente})"
+    agua_txt = "--" if a_lo is None else f"{a_lo}-{a_hi} (n={agua_n}, {agua_fuente})"
+    hum_txt = "--" if a.get("humedad") is None else f"{a['humedad']}%"
+    aw_txt = "--" if a.get("aw") is None else f"{a['aw']}"
     return (f"Z1={z('z1')}  Z2={z('z2')}  Z3={z('z3')}  Z4={z('z4')}  "
-            f"|  Rate={rate} kg/h  |  Agua Termo={agua}")
+            f"|  Rate={rate_txt}  |  Agua Termo={agua_txt}  "
+            f"|  Humedad esperada={hum_txt}  AW esperado={aw_txt}")
 
 
 def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
@@ -52,15 +59,33 @@ def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
         r = analizar_producto_linea(g, producto, linea)
         add("")
         add(f"### {producto}  |  {linea}")
-        add(f"    Corridas: {r.n_total}   En rango: {r.n_en_rango}   "
-            f"Confiabilidad: {r.confiabilidad}")
+        add(f"    Corridas: {r.n_total}   En rango (humedad): {r.n_en_rango}   "
+            f"En meta (humedad+AW): {r.n_calidad_total}   Confiabilidad: {r.confiabilidad}")
         add(f"    Humedad prom: {r.humedad_prom}%   (std {r.humedad_std})   "
             f"AW prom: {r.aw_prom}")
-        if r.n_en_rango >= 1:
-            add(f"    ARRANQUE -> {_fmt_arranque(r.arranque)}")
+        add(f"    Receta calculada con: {r.base_criterio}")
+        if r.n_calidad_total >= 1 or r.n_en_rango >= 1:
+            add(f"    ARRANQUE -> {_fmt_arranque(r.arranque, r.rate_rango, r.agua_rango, r.rate_rango_n, r.rate_rango_fuente, r.agua_rango_n, r.agua_rango_fuente)}")
         else:
-            add(f"    ARRANQUE -> (orientativo, sin corridas en rango) "
-                f"{_fmt_arranque(r.arranque)}")
+            add(f"    ARRANQUE -> (orientativo, sin corridas en meta) "
+                f"{_fmt_arranque(r.arranque, r.rate_rango, r.agua_rango, r.rate_rango_n, r.rate_rango_fuente, r.agua_rango_n, r.agua_rango_fuente)}")
+        if r.rate_zona_hint is not None:
+            h = r.rate_zona_hint
+            add(f"    NOTA: el rate puede moverse bastante dentro de la corrida; si corres "
+                f"cerca de {h['rate_lo']:,} kg/h, {config.ZONA_NOMBRE[r.zona_clave]} ~{h['zona_lo']}C; "
+                f"si corres cerca de {h['rate_hi']:,} kg/h, ~{h['zona_hi']}C (proyectado con el modelo de rate).")
+        if r.correccion is not None:
+            c = r.correccion
+            if c.get("delta_c") is not None:
+                conflicto_txt = "  [conflicto humedad/AW -> se priorizo AW]" if c["conflicto"] else ""
+                add(f"    ** RECETA AJUSTADA (esperado fuera de meta, PROYECCION no validada) **")
+                add(f"       {c['direccion']} {c['zona_nombre']} de {c['valor_original']} a "
+                    f"{c['valor_corregido']} (delta {c['delta_c']:+.1f}C), criterio: {c['criterio']}"
+                    f"{conflicto_txt}")
+                add(f"       Con este ajuste se proyecta: Humedad ~{c['humedad_proyectada']}%   "
+                    f"AW ~{c['aw_proyectada']}")
+            else:
+                add(f"    ** AVISO: {c['motivo']} **")
         corr_txt = "  ".join(
             f"{config.ZONA_NOMBRE[z].split()[1]}:"
             f"{('n/d' if pd.isna(c) else f'{c:+.2f}')}"
@@ -77,12 +102,22 @@ def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
     add("-" * 78)
     for linea in sorted(df["linea"].unique()):
         amb = ajustes_ambientales(df, linea)
+        tabla = amb["tabla"]
         add("")
         add(f"### {linea}")
-        if len(amb) == 0:
+        if len(tabla) == 0:
             add("    (sin datos ambientales suficientes)")
         else:
-            add(amb.to_string(index=False))
+            add(tabla.to_string(index=False))
+        mh, maw = amb["modelo_humedad"], amb["modelo_aw"]
+        if mh is not None:
+            add(f"    Sensibilidad continua humedad: por +1C ambiente "
+                f"{mh['coefs']['temp_amb']:+.3f}%   por +10% HR "
+                f"{mh['coefs']['hr']*10:+.3f}%   (R2={mh['r2']}, n={mh['n']})")
+        if maw is not None:
+            add(f"    Sensibilidad continua AW: por +1C ambiente "
+                f"{maw['coefs']['temp_amb']*100:+.3f} pts   por +10% HR "
+                f"{maw['coefs']['hr']*1000:+.3f} pts   (R2={maw['r2']}, n={maw['n']})")
     add("")
     add("=" * 78)
     add(" RECORDATORIO: ajustar SIEMPRE la zona clave primero, una zona a la vez,")

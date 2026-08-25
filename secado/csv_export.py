@@ -27,8 +27,14 @@ def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
         filas.append({
             "Producto": producto, "Linea": linea,
             "Z1": a["z1"], "Z2": a["z2"], "Z3": a["z3"], "Z4": a["z4"],
-            "Rate(kg/h)": a["rate"], "AguaTermo": a["agua_termo"],
-            "Corridas": r.n_total, "EnRango": r.n_en_rango,
+            "Rate_p25": r.rate_rango[0], "Rate_p75": r.rate_rango[1],
+            "Rate_n": r.rate_rango_n, "Rate_fuente": r.rate_rango_fuente,
+            "AguaTermo_p25": r.agua_rango[0], "AguaTermo_p75": r.agua_rango[1],
+            "AguaTermo_n": r.agua_rango_n, "AguaTermo_fuente": r.agua_rango_fuente,
+            "HumedadEsperada": a["humedad"], "AWEsperado": a["aw"],
+            "Corridas": r.n_total, "EnRangoHumedad": r.n_en_rango,
+            "EnMeta_HumedadYAW": r.n_calidad_total,
+            "BaseCriterio": r.base_criterio,
             "ZonaClave": config.ZONA_NOMBRE[r.zona_clave],
             "Confiabilidad": r.confiabilidad,
         })
@@ -39,7 +45,7 @@ def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
 
     amb_all = []
     for linea in sorted(df["linea"].unique()):
-        amb = ajustes_ambientales(df, linea)
+        amb = ajustes_ambientales(df, linea)["tabla"]
         if len(amb) > 0:
             amb.insert(0, "Linea", linea)
             amb_all.append(amb)
