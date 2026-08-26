@@ -33,8 +33,8 @@ COLUMNAS = {
 
 # --- Metas de calidad (confirmadas por calidad) -----------------------------------
 HUMEDAD_MIN   = 9.0
-HUMEDAD_MAX   = 10.0
-HUMEDAD_OBJ   = (HUMEDAD_MIN + HUMEDAD_MAX) / 2.0   # 9.5%, centro del rango
+HUMEDAD_MAX   = 11.0
+HUMEDAD_OBJ   = (HUMEDAD_MIN + HUMEDAD_MAX) / 2.0
 AW_MIN_IDONEO = 0.5200
 AW_MAX_IDONEO = 0.5800
 
