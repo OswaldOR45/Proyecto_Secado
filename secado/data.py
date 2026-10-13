@@ -70,13 +70,16 @@ def limpiar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         )
     df["rate_valido"] = df["rate"].where(~sospechosos, np.nan)
 
-    # Banderas de calidad
-    df["en_rango_h"] = df["humedad"].between(config.HUMEDAD_MIN, config.HUMEDAD_MAX)
+    # Banderas de calidad (limites por producto: perro / gato)
+    lim = df["producto"].map(config.limites)
+    h_min = lim.map(lambda d: d["h_min"]); h_max = lim.map(lambda d: d["h_max"])
+    aw_min = lim.map(lambda d: d["aw_min"]); aw_max = lim.map(lambda d: d["aw_max"])
+    df["en_rango_h"] = (df["humedad"] >= h_min) & (df["humedad"] <= h_max)
     df["estado_h"] = np.where(
-        df["humedad"] < config.HUMEDAD_MIN, "BAJA (<9%)",
-        np.where(df["humedad"] > config.HUMEDAD_MAX, "ALTA (>10%)", "EN RANGO")
+        df["humedad"] < h_min, "BAJA",
+        np.where(df["humedad"] > h_max, "ALTA", "EN RANGO")
     )
-    df["aw_idoneo"] = df["aw"].between(config.AW_MIN_IDONEO, config.AW_MAX_IDONEO)
+    df["aw_idoneo"] = (df["aw"] >= aw_min) & (df["aw"] <= aw_max)
     df["calidad_total"] = df["en_rango_h"] & df["aw_idoneo"]
 
     # Condicion ambiental

@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Entry point del CLI. Se invoca con:  python -m secado [fuente]"""
+"""Entry point del CLI. Se invoca con:
+    python -m secado [fuente] [--secador ruta_secadormc.csv] [--calidad ruta_enfriador_grande.csv]
+
+--secador y --calidad son bases complementarias, mucho mas grandes que la
+bitacora operativa, pero con menos columnas cada una (no traen rate ni
+agua_termo). Si se dan, se usan para robustecer la zona clave/sensibilidad
+(--secador) y el promedio de humedad/AW (--calidad); si no se dan, el
+programa sigue funcionando solo con la bitacora operativa como siempre."""
 from __future__ import annotations
 import sys
 
@@ -36,13 +43,10 @@ def main(argv: list[str] | None = None) -> int:
         f.write(generar_html(df, avisos))
     with open("guia_operador.md", "w", encoding="utf-8") as f:
         f.write("```\n" + guia_txt + "\n```\n")
-    rutas_csv = exportar_tablas(df)
+
 
     print(f"[ok] HTML  -> guia_operador.html")
     print(f"[ok] Texto -> guia_operador.md")
-    for r in rutas_csv:
-        print(f"[ok] CSV   -> {r}")
-    return 0
 
 
 if __name__ == "__main__":

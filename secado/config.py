@@ -33,10 +33,23 @@ COLUMNAS = {
 
 # --- Metas de calidad (confirmadas por calidad) -----------------------------------
 HUMEDAD_MIN   = 9.0
-HUMEDAD_MAX   = 10.5
+HUMEDAD_MAX   = 10.5   # confirmado con la base de calidad del enfriador (LSH real, miles de registros); antes 10.0 por error
 HUMEDAD_OBJ   = (HUMEDAD_MIN + HUMEDAD_MAX) / 2.0
-AW_MIN_IDONEO = 0.5200
-AW_MAX_IDONEO = 0.5800
+AW_MIN_IDONEO = 0.50    # confirmado con la base de calidad (LIAW real); antes 0.52 por error
+AW_MAX_IDONEO = 0.60    # confirmado con la base de calidad (LSAW real); antes 0.58 por error
+
+# --- Limites por especie -----------------------------------------------------
+# Gato (SilverCat): humedad 7.5-8.5% y AW solo con tope (no exceder 0.60, sin piso).
+# Resto de productos: los limites de arriba.
+PRODUCTOS_GATO = {"SilverCat"}
+
+
+def limites(producto: str) -> dict:
+    """Limites de calidad vigentes para un producto."""
+    if producto in PRODUCTOS_GATO:
+        return {"h_min": 7.5, "h_max": 8.5, "aw_min": 0.0, "aw_max": AW_MAX_IDONEO}
+    return {"h_min": HUMEDAD_MIN, "h_max": HUMEDAD_MAX,
+            "aw_min": AW_MIN_IDONEO, "aw_max": AW_MAX_IDONEO}
 
 
 # --- Zonas del secador -----------------------------------------------------------
@@ -55,14 +68,27 @@ RATE_MINIMO_VALIDO = 1000   # kg/h
 # que otra zona domina con claridad.
 DEFAULT_ZONA_CLAVE = "z3"
 MIN_CORR_CLAVE     = 0.40    # |correlacion| minima para confiar en una zona
-MARGEN_CLAVE       = 0.15    # cuanto debe superar a las demas para sustituir a Z3
+MARGEN_CLAVE       = 0.15    # cuanto debe superar a las demas para sustituir a Z3 (bitacora chica, poca muestra)
+MARGEN_CLAVE_FUENTE_GRANDE = 0.04  # igual pero con cientos de corridas (secador): una diferencia chica ya es real, no ruido
+MIN_CORR_CLAVE_FUENTE_GRANDE = 0.25  # igual: con n grande, una correlacion moderada ya es estadisticamente solida
 
 
 # --- Topes para que las recomendaciones sean siempre realistas -------------------
 SENS_MIN_DEG_POR_PCT = 2.0    # C por cada 1% de humedad (piso)
-SENS_MAX_DEG_POR_PCT = 15.0   # C por cada 1% de humedad (techo)
+SENS_MAX_DEG_POR_PCT = 45.0   # C por cada 1% de humedad (techo). Confirmado con
+                               # la base grande del secador (quemadores, n hasta 999):
+                               # valores reales caen entre 14.7 y 42.3; antes el tope
+                               # era 15.0, puesto sin datos suficientes para calibrarlo
+                               # y estaba recortando casi todos los casos reales.
 AJUSTE_AMB_CAP       = 12.0   # tope absoluto del ajuste ambiental sugerido (C)
 MIN_N_CONDICION      = 2      # registros minimos por condicion para sugerir numero
+
+# Umbrales de alerta ambiental, como FRACCION del medio-ancho de la meta (no
+# valor absoluto): antes eran fijos (0.3/0.6 humedad, 0.01/0.02 AW) calibrados
+# para el rango viejo mas angosto; al corregir HUMEDAD_MAX y AW_MIN/MAX_IDONEO
+# el rango se ensancho, y esos absolutos sobre-marcaban casi todo como CRITICO.
+FRACCION_ALERTA_MONITOREAR = 0.6
+FRACCION_ALERTA_CRITICO = 1.2
 
 
 # --- Sesgo hacia humedad alta dentro de la meta (vender agua, no materia prima) ---
@@ -76,6 +102,12 @@ MIN_N_SESGO_HUMEDAD_ALTA = 3
 # estadisticamente estable. Con menos puntos, el "rango" son casi los mismos
 # 2-3 numeros -- se amplia a una base mayor en vez de mostrar algo inestable.
 MIN_N_RANGO_CONFIABLE = 5
+
+# Piso de muestra para preferir una fuente externa (SECADORMC o Enfriador
+# grande) sobre la bitacora operativa chica al elegir zona clave / calidad
+# base. Con estas fuentes llegando a n=100-900 por producto x linea, un piso
+# de 30 sigue siendo mucho mas confiable que las decenas de la bitacora chica.
+MIN_N_FUENTE_GRANDE = 30
 
 # --- Modelo multivariante (zona clave + rate + agua_termo) -----------------------
 # Separa el efecto de la zona del efecto del rate/agua_termo, que el operador

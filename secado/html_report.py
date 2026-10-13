@@ -839,13 +839,14 @@ def _producto_card(r) -> str:
     aw_esp = a.get("aw")
     hum_esp_txt = f"{hum_esp:.2f}%" if hum_esp is not None else "n/d"
     aw_esp_txt = f"{aw_esp:.4f}" if aw_esp is not None else "n/d"
+    lim_p = config.limites(r.producto)
     hum_fuera_rango = (
             hum_esp is not None and
-            not (config.HUMEDAD_MIN <= hum_esp <= config.HUMEDAD_MAX)
+            not (lim_p["h_min"] <= hum_esp <= lim_p["h_max"])
     )
     aw_fuera_rango = (
             aw_esp is not None and
-            not (config.AW_MIN_IDONEO <= aw_esp <= config.AW_MAX_IDONEO)
+            not (lim_p["aw_min"] <= aw_esp <= lim_p["aw_max"])
     )
     hum_esp_cls = " stat-warn" if hum_fuera_rango else ""
     aw_esp_cls = " stat-warn" if aw_fuera_rango else ""
@@ -918,6 +919,10 @@ def _producto_card(r) -> str:
     <span>H: <b>{r.humedad_prom:.2f}%</b> · σ <b>{r.humedad_std:.2f}</b></span>
     <span class="conf-tag {conf_class}">{_e(r.confiabilidad)}</span>
   </div>
+  <div class="prod-meta" style="padding-top:0;">
+    <span style="color:var(--ink-muted)">Zona clave desde: <b style="color:var(--ink)">{_e(r.fuente_zona)}</b></span>
+    {f'<span style="color:var(--ink-muted)">Ref. Calidad (n={r.n_calidad_grande}): H <b style="color:var(--ink)">{r.humedad_prom_calidad}%</b> · AW <b style="color:var(--ink)">{r.aw_prom_calidad}</b></span>' if r.n_calidad_grande >= config.MIN_N_RANGO_CONFIABLE else ''}
+  </div>
   <div class="zonas">{zonas_block}</div>
   <div class="prod-secondary">
     <div>
@@ -952,11 +957,11 @@ def _producto_card(r) -> str:
 </article>"""
 
 
-def _productos(df: pd.DataFrame) -> str:
+def _productos(df: pd.DataFrame, quemador_df=None, calidad_df=None) -> str:
     cards = []
     # Ordenar: por producto, luego por linea (L1 antes que L2)
     for (producto, linea), g in sorted(df.groupby(["producto", "linea"])):
-        r = analizar_producto_linea(g, producto, linea)
+        r = analizar_producto_linea(g, producto, linea, quemador_df, calidad_df)
         cards.append(_producto_card(r))
     return f"""
 <section class="section">
@@ -1056,7 +1061,8 @@ def _footer() -> str:
 #  Entry point
 # =================================================================================
 
-def generar_html(df: pd.DataFrame, avisos: list[str]) -> str:
+def generar_html(df: pd.DataFrame, avisos: list[str],
+                 quemador_df: pd.DataFrame = None, calidad_df: pd.DataFrame = None) -> str:
     """Devuelve el HTML completo como string. No escribe archivos."""
     return f"""<!doctype html>
 <html lang="es">
@@ -1074,7 +1080,7 @@ def generar_html(df: pd.DataFrame, avisos: list[str]) -> str:
     {_hero(df)}
     {_kpi_strip(df)}
     {_resumen_lineas(df)}
-    {_productos(df)}
+    {_productos(df, quemador_df, calidad_df)}
     {_ambientales(df)}
     {_avisos(avisos)}
     {_footer()}

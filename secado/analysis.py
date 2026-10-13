@@ -36,9 +36,13 @@ class ResultadoProducto:
     agua_rango_fuente: str
     rate_zona_hint: dict | None  # zona sugerida en los extremos del rango de rate
     zona_clave: str         # "z3" por defecto
+    fuente_zona: str        # de donde salio la zona clave/sensibilidad (bitacora chica o secador)
     correlaciones: dict     # {z1..z4: corr con humedad}
     sensibilidad: dict      # {z1..z4: C por 1% de humedad (con signo)}
     sens_clave: float | None  # sensibilidad robusta de la zona clave (None si insuficiente)
+    humedad_prom_calidad: float | None  # promedio humedad segun base grande de Calidad (si hay match)
+    aw_prom_calidad: float | None
+    n_calidad_grande: int    # 0 si no hubo match
     modelo_rate_agua: dict | None  # regresion multivariante (None si no hay datos suficientes)
     correccion: dict | None  # ajuste de zona_clave si humedad/aw esperados quedan fuera de meta
     reglas: list[str]
@@ -149,20 +153,31 @@ def _modelo_rate_agua(g: pd.DataFrame, zona_clave: str) -> dict | None:
     }
 
 
-def elegir_zona_clave(corr: dict) -> tuple[str, bool]:
+def elegir_zona_clave(corr: dict, margen: float = None, min_corr: float = None) -> tuple[str, bool]:
     """Devuelve (zona_clave, fue_determinada_por_datos).
     Por defecto usa Zona 3 (conocimiento del proceso). Solo la sustituye si OTRA
-    zona domina con claridad: |corr| >= MIN_CORR_CLAVE y supera a las demas por
-    al menos MARGEN_CLAVE. Esto evita que la colinealidad (zonas que se mueven
-    juntas) elija una zona casi al azar."""
+    zona domina con claridad: |corr| >= min_corr y supera a las demas por al
+    menos `margen`. Esto evita que la colinealidad (zonas que se mueven juntas)
+    elija una zona casi al azar.
+
+    Ambos umbrales dependen de cuanta certeza hay en los numeros: con pocos
+    datos (bitacora chica, decenas de corridas) hasta una correlacion "fuerte"
+    puede ser ruido, por eso los defaults (MIN_CORR_CLAVE=0.40, MARGEN_CLAVE=
+    0.15) son exigentes. Con cientos de corridas (fuente grande del secador)
+    una correlacion de 0.30-0.35 ya es estadisticamente solida y una diferencia
+    de 0.05-0.09 entre zonas ya es real, no azar -- por eso el caller puede
+    pasar umbrales mas permisivos (MIN_CORR_CLAVE_FUENTE_GRANDE, MARGEN_CLAVE_
+    FUENTE_GRANDE)."""
+    margen = config.MARGEN_CLAVE if margen is None else margen
+    min_corr = config.MIN_CORR_CLAVE if min_corr is None else min_corr
     validas = {z: abs(c) for z, c in corr.items() if not pd.isna(c)}
     if not validas:
         return config.DEFAULT_ZONA_CLAVE, False
     mejor = max(validas, key=validas.get)
     mejor_val = validas[mejor]
     segundo_val = max([v for z, v in validas.items() if z != mejor], default=0.0)
-    domina = (mejor_val >= config.MIN_CORR_CLAVE) and \
-             (mejor_val - segundo_val >= config.MARGEN_CLAVE)
+    domina = (mejor_val >= min_corr) and \
+             (mejor_val - segundo_val >= margen)
     if domina and mejor != config.DEFAULT_ZONA_CLAVE:
         return mejor, True
     if pd.isna(corr.get(config.DEFAULT_ZONA_CLAVE, np.nan)):
@@ -171,15 +186,19 @@ def elegir_zona_clave(corr: dict) -> tuple[str, bool]:
 
 
 def sensibilidad_robusta(zona: str, corr: dict, sens: dict,
-                          sens_min: float = None, sens_max: float = None) -> float | None:
+                          sens_min: float = None, sens_max: float = None,
+                          min_corr: float = None) -> float | None:
     """C por cada 1 punto del target, SOLO si es confiable.
     Requiere correlacion fuerte y valor dentro de un rango fisicamente razonable.
-    sens_min/sens_max por defecto son los de humedad; se pasan otros para AW."""
+    sens_min/sens_max por defecto son los de humedad; se pasan otros para AW.
+    min_corr por defecto es MIN_CORR_CLAVE (bitacora chica); el caller pasa
+    MIN_CORR_CLAVE_FUENTE_GRANDE cuando corr/sens vienen de la fuente grande."""
     sens_min = config.SENS_MIN_DEG_POR_PCT if sens_min is None else sens_min
     sens_max = config.SENS_MAX_DEG_POR_PCT if sens_max is None else sens_max
+    min_corr = config.MIN_CORR_CLAVE if min_corr is None else min_corr
     c = corr.get(zona)
     s = sens.get(zona)
-    if c is None or pd.isna(c) or abs(c) < config.MIN_CORR_CLAVE:
+    if c is None or pd.isna(c) or abs(c) < min_corr:
         return None
     if s is None or pd.isna(s):
         return None
@@ -190,7 +209,8 @@ def sensibilidad_robusta(zona: str, corr: dict, sens: dict,
 
 
 def resolver_correccion_zona(hum_actual: float | None, aw_actual: float | None,
-                              sens_hum: float | None, sens_aw: float | None) -> dict | None:
+                              sens_hum: float | None, sens_aw: float | None,
+                              lim: dict | None = None) -> dict | None:
     """Calcula cuanto y en que sentido mover la MISMA zona clave para que
     humedad Y aw esperados queden dentro de meta (con un margen chico, no al
     filo del limite). Fisica: mas temperatura en la zona clave = menos
@@ -203,22 +223,25 @@ def resolver_correccion_zona(hum_actual: float | None, aw_actual: float | None,
 
     Devuelve None si ninguna de las dos variables necesita correccion, o si
     ninguna tiene sensibilidad confiable con la que calcular un numero."""
+    lim = lim or {"h_min": config.HUMEDAD_MIN, "h_max": config.HUMEDAD_MAX,
+                  "aw_min": config.AW_MIN_IDONEO, "aw_max": config.AW_MAX_IDONEO}
+
     def _gap_humedad(h):
         if h is None:
             return None
-        if h < config.HUMEDAD_MIN:
-            return h - (config.HUMEDAD_MIN + config.MARGEN_HUMEDAD_CORRECCION)
-        if h > config.HUMEDAD_MAX:
-            return h - (config.HUMEDAD_MAX - config.MARGEN_HUMEDAD_CORRECCION)
+        if h < lim["h_min"]:
+            return h - (lim["h_min"] + config.MARGEN_HUMEDAD_CORRECCION)
+        if h > lim["h_max"]:
+            return h - (lim["h_max"] - config.MARGEN_HUMEDAD_CORRECCION)
         return 0.0
 
     def _gap_aw(v):
         if v is None:
             return None
-        if v < config.AW_MIN_IDONEO:
-            return v - (config.AW_MIN_IDONEO + config.MARGEN_AW_CORRECCION)
-        if v > config.AW_MAX_IDONEO:
-            return v - (config.AW_MAX_IDONEO - config.MARGEN_AW_CORRECCION)
+        if lim["aw_min"] > 0 and v < lim["aw_min"]:
+            return v - (lim["aw_min"] + config.MARGEN_AW_CORRECCION)
+        if v > lim["aw_max"]:
+            return v - (lim["aw_max"] - config.MARGEN_AW_CORRECCION)
         return 0.0
 
     gap_h = _gap_humedad(hum_actual)          # puntos de % (positivo = sobra humedad)
@@ -276,14 +299,16 @@ def resolver_correccion_zona(hum_actual: float | None, aw_actual: float | None,
     }
 
 
-def _construir_reglas(zona_clave: str, corr: dict, sens: dict, modelo: dict | None) -> list[str]:
+def _construir_reglas(zona_clave: str, corr: dict, sens: dict, modelo: dict | None,
+                       min_corr: float = None, lim: dict | None = None) -> list[str]:
     """Traduce el analisis a instrucciones operativas: donde, cuando y cuanto.
     La DIRECCION se ancla en la fisica del secador (mas temperatura = menos
     humedad), no en la correlacion observada (que en muestras chicas puede
     salir invertida y dar instrucciones peligrosas)."""
     reglas = []
+    lim = lim or config.limites("")
     zc = config.ZONA_NOMBRE[zona_clave]
-    zc_sens = sensibilidad_robusta(zona_clave, corr, sens)
+    zc_sens = sensibilidad_robusta(zona_clave, corr, sens, min_corr=min_corr)
 
     orden = sorted(
         [(z, c) for z, c in corr.items() if not pd.isna(c)],
@@ -300,15 +325,15 @@ def _construir_reglas(zona_clave: str, corr: dict, sens: dict, modelo: dict | No
             f"CUANTO: ~{paso_lo:.0f}C en {zc} corrigen ~0.5% de humedad; "
             f"~{paso_hi:.0f}C corrigen ~1.0% (estimado de los datos)."
         )
-        reglas.append(f"CUANDO sale ALTA (>10%): SUBIR {zc} ~{paso_lo:.0f} a {paso_hi:.0f}C.")
-        reglas.append(f"CUANDO sale BAJA (<9%): BAJAR {zc} ~{paso_lo:.0f} a {paso_hi:.0f}C.")
+        reglas.append(f"CUANDO sale ALTA (>{lim["h_max"]:.1f}%): SUBIR {zc} ~{paso_lo:.0f} a {paso_hi:.0f}C.")
+        reglas.append(f"CUANDO sale BAJA (<{lim["h_min"]:.1f}%): BAJAR {zc} ~{paso_lo:.0f} a {paso_hi:.0f}C.")
     else:
         reglas.append(
             f"CUANTO: datos aun insuficientes para estimar grados exactos; "
             f"ajustar {zc} en pasos de 3-5C y volver a medir."
         )
-        reglas.append(f"CUANDO sale ALTA (>10%): SUBIR {zc} 3-5C.")
-        reglas.append(f"CUANDO sale BAJA (<9%): BAJAR {zc} 3-5C.")
+        reglas.append(f"CUANDO sale ALTA (>{lim["h_max"]:.1f}%): SUBIR {zc} 3-5C.")
+        reglas.append(f"CUANDO sale BAJA (<{lim["h_min"]:.1f}%): BAJAR {zc} 3-5C.")
 
     c_zc = corr.get(zona_clave)
     if c_zc is not None and not pd.isna(c_zc) and c_zc > 0.2:
@@ -374,7 +399,9 @@ def resumen_por_linea(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(filas).sort_values("Linea").reset_index(drop=True)
 
 
-def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> ResultadoProducto:
+def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str,
+                             quemador_df: pd.DataFrame = None,
+                             calidad_df: pd.DataFrame = None) -> ResultadoProducto:
     """Analisis completo para una combinacion producto x linea."""
     en_rango = g[g["en_rango_h"]]
     n_rango = len(en_rango)
@@ -459,10 +486,46 @@ def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> Resul
 
     corr = _correlaciones(g, "humedad")
     sens = _sensibilidad(g, "humedad")
-    zona_clave, _ = elegir_zona_clave(corr)
-    sens_clave = sensibilidad_robusta(zona_clave, corr, sens)
+    fuente_zona = f"bitacora operativa (n={len(g)})"
+
+    # Si hay datos del secador (quemadores) para este producto x linea, con
+    # muestra grande, se prefieren para elegir zona clave y su sensibilidad:
+    # son cientos de corridas vs las decenas de la bitacora chica, y miden el
+    # mismo secador un paso antes en el proceso (antes de coating/enfriador).
+    quemador_sub = None
+    usar_umbral_grande = False
+    if quemador_df is not None:
+        qs = quemador_df[(quemador_df["producto"] == producto) & (quemador_df["linea"] == linea)]
+        if len(qs) >= config.MIN_N_FUENTE_GRANDE:
+            quemador_sub = qs
+            corr_q = _correlaciones(qs, "humedad")
+            sens_q = _sensibilidad(qs, "humedad")
+            # Solo se reemplaza si al menos una zona pasa el umbral de
+            # correlacion confiable en la fuente grande; si no, se conserva
+            # el calculo de la bitacora chica (mejor lo poco confiable-pero-
+            # completo que nada).
+            if any(pd.notna(c) and abs(c) >= config.MIN_CORR_CLAVE_FUENTE_GRANDE for c in corr_q.values()):
+                corr, sens = corr_q, sens_q
+                fuente_zona = f"secador / quemadores (n={len(qs)})"
+                usar_umbral_grande = True
+
+    if usar_umbral_grande:
+        zona_clave, _ = elegir_zona_clave(
+            corr, margen=config.MARGEN_CLAVE_FUENTE_GRANDE, min_corr=config.MIN_CORR_CLAVE_FUENTE_GRANDE,
+        )
+    else:
+        zona_clave, _ = elegir_zona_clave(corr)
+    sens_clave = sensibilidad_robusta(
+        zona_clave, corr, sens,
+        min_corr=(config.MIN_CORR_CLAVE_FUENTE_GRANDE if usar_umbral_grande else None),
+    )
     modelo = _modelo_rate_agua(g, zona_clave)
-    reglas = _construir_reglas(zona_clave, corr, sens, modelo)
+    lim_prod = config.limites(producto)
+    reglas = _construir_reglas(
+        zona_clave, corr, sens, modelo,
+        min_corr=(config.MIN_CORR_CLAVE_FUENTE_GRANDE if usar_umbral_grande else None),
+        lim=lim_prod,
+    )
 
     # --- Correccion automatica si el esperado (humedad y/o AW) sale de meta -----
     corr_aw = _correlaciones(g, "aw")
@@ -472,7 +535,7 @@ def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> Resul
         sens_min=config.AW_SENS_MIN_POR_PUNTO, sens_max=config.AW_SENS_MAX_POR_PUNTO,
     )
     correccion = resolver_correccion_zona(
-        arranque.get("humedad"), arranque.get("aw"), sens_clave, sens_clave_aw,
+        arranque.get("humedad"), arranque.get("aw"), sens_clave, sens_clave_aw, lim_prod,
     )
     if correccion is not None and correccion.get("delta_c") is not None:
         zona_actual = arranque.get(zona_clave)
@@ -504,6 +567,18 @@ def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> Resul
                 "rate_centro": rate_centro, "zona_centro": zona_centro,
             }
 
+    # --- Enriquecer promedio de humedad/AW con la base grande de Calidad ---
+    # No reemplaza el arranque (esa base no tiene rate/agua_termo/zonas), solo
+    # da un promedio de referencia con muchisima mas muestra para contrastar.
+    humedad_prom_calidad = aw_prom_calidad = None
+    n_calidad_grande = 0
+    if calidad_df is not None:
+        cs = calidad_df[(calidad_df["producto"] == producto) & (calidad_df["linea"] == linea)]
+        n_calidad_grande = len(cs)
+        if n_calidad_grande >= config.MIN_N_RANGO_CONFIABLE:
+            humedad_prom_calidad = round(cs["humedad"].mean(), 2) if cs["humedad"].notna().any() else None
+            aw_prom_calidad = round(cs["aw"].mean(), 4) if cs["aw"].notna().any() else None
+
     n_para_confiabilidad = len(base_arranque)
 
     return ResultadoProducto(
@@ -526,9 +601,13 @@ def analizar_producto_linea(g: pd.DataFrame, producto: str, linea: str) -> Resul
         agua_rango_fuente=agua_fuente,
         rate_zona_hint=rate_zona_hint,
         zona_clave=zona_clave,
+        fuente_zona=fuente_zona,
         correlaciones=corr,
         sensibilidad=sens,
         sens_clave=sens_clave,
+        humedad_prom_calidad=humedad_prom_calidad,
+        aw_prom_calidad=aw_prom_calidad,
+        n_calidad_grande=n_calidad_grande,
         modelo_rate_agua=modelo,
         correccion=correccion,
         reglas=reglas,
@@ -566,9 +645,15 @@ def ajustes_ambientales(df: pd.DataFrame, linea: str) -> dict:
         gap_h = h_prom - config.HUMEDAD_OBJ
         aw_centro = (config.AW_MIN_IDONEO + config.AW_MAX_IDONEO) / 2
         gap_aw = aw_prom - aw_centro
-        alerta_h = "CRITICO" if abs(gap_h) >= 0.6 else ("Monitorear" if abs(gap_h) >= 0.3 else "OK")
-        alerta_aw = ("CRITICO" if abs(gap_aw) >= 0.02
-                     else ("Monitorear" if abs(gap_aw) >= 0.01 else "OK"))
+        medio_ancho_h = (config.HUMEDAD_MAX - config.HUMEDAD_MIN) / 2
+        medio_ancho_aw = (config.AW_MAX_IDONEO - config.AW_MIN_IDONEO) / 2
+        umbral_h_crit = medio_ancho_h * config.FRACCION_ALERTA_CRITICO
+        umbral_h_mon = medio_ancho_h * config.FRACCION_ALERTA_MONITOREAR
+        umbral_aw_crit = medio_ancho_aw * config.FRACCION_ALERTA_CRITICO
+        umbral_aw_mon = medio_ancho_aw * config.FRACCION_ALERTA_MONITOREAR
+        alerta_h = "CRITICO" if abs(gap_h) >= umbral_h_crit else ("Monitorear" if abs(gap_h) >= umbral_h_mon else "OK")
+        alerta_aw = ("CRITICO" if abs(gap_aw) >= umbral_aw_crit
+                     else ("Monitorear" if abs(gap_aw) >= umbral_aw_mon else "OK"))
 
         if len(sub) < config.MIN_N_CONDICION:
             ajuste_txt = f"Datos insuficientes (n={len(sub)})"

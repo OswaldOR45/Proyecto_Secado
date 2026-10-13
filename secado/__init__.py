@@ -20,7 +20,7 @@ from .text_report import generar_guia
 from .html_report import generar_html
 from .csv_export import exportar_tablas
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 __all__ = [
     "cargar_datos", "limpiar",
     "ResultadoProducto",
