@@ -8,12 +8,14 @@ import pandas as pd
 from . import config
 from .analysis import (
     resumen_por_linea, analizar_producto_linea, ajustes_ambientales,
+    sensibilidad_conjunta_global,
 )
 
 
 def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
     os.makedirs(carpeta, exist_ok=True)
     rutas = []
+    sens_global = sensibilidad_conjunta_global(df)
 
     res = resumen_por_linea(df)
     p = os.path.join(carpeta, "resumen_por_linea.csv")
@@ -22,7 +24,7 @@ def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
 
     filas = []
     for (producto, linea), g in df.groupby(["producto", "linea"]):
-        r = analizar_producto_linea(g, producto, linea)
+        r = analizar_producto_linea(g, producto, linea, sens_global=sens_global)
         a = r.arranque
         filas.append({
             "Producto": producto, "Linea": linea,
@@ -32,10 +34,11 @@ def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
             "AguaTermo_p25": r.agua_rango[0], "AguaTermo_p75": r.agua_rango[1],
             "AguaTermo_n": r.agua_rango_n, "AguaTermo_fuente": r.agua_rango_fuente,
             "HumedadEsperada": a["humedad"], "AWEsperado": a["aw"],
+            "Sens_C_por_1pctHumedad": r.sens_conjunta,
+            "Sens_fuente": r.sens_fuente,
             "Corridas": r.n_total, "EnRangoHumedad": r.n_en_rango,
             "EnMeta_HumedadYAW": r.n_calidad_total,
             "BaseCriterio": r.base_criterio,
-            "ZonaClave": config.ZONA_NOMBRE[r.zona_clave],
             "Confiabilidad": r.confiabilidad,
         })
     arranque_df = pd.DataFrame(filas).sort_values(["Producto", "Linea"])
@@ -45,7 +48,7 @@ def exportar_tablas(df: pd.DataFrame, carpeta: str = "salida") -> list[str]:
 
     amb_all = []
     for linea in sorted(df["linea"].unique()):
-        amb = ajustes_ambientales(df, linea)["tabla"]
+        amb = ajustes_ambientales(df, linea, sens_global=sens_global)["tabla"]
         if len(amb) > 0:
             amb.insert(0, "Linea", linea)
             amb_all.append(amb)

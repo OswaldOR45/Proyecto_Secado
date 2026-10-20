@@ -26,7 +26,8 @@ def _fmt_arranque(a: dict, rate_rango: tuple, agua_rango: tuple,
             f"|  Humedad esperada={hum_txt}  AW esperado={aw_txt}")
 
 
-def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
+def generar_guia(df: pd.DataFrame, avisos: list[str],
+                  quemador_df: pd.DataFrame = None, calidad_df: pd.DataFrame = None) -> str:
     """Devuelve la guia completa como string. No imprime ni escribe archivos."""
     L = []
     add = L.append
@@ -56,7 +57,7 @@ def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
     add("-" * 78)
 
     for (producto, linea), g in df.groupby(["producto", "linea"]):
-        r = analizar_producto_linea(g, producto, linea)
+        r = analizar_producto_linea(g, producto, linea, quemador_df, calidad_df)
         add("")
         add(f"### {producto}  |  {linea}")
         add(f"    Corridas: {r.n_total}   En rango (humedad): {r.n_en_rango}   "
@@ -92,7 +93,10 @@ def generar_guia(df: pd.DataFrame, avisos: list[str]) -> str:
             for z, c in r.correlaciones.items()
         )
         add(f"    Correlacion zona-humedad:  {corr_txt}")
-        add(f"    ZONA CLAVE: {config.ZONA_NOMBRE[r.zona_clave]}")
+        add(f"    ZONA CLAVE: {config.ZONA_NOMBRE[r.zona_clave]}  (fuente: {r.fuente_zona})")
+        if r.n_calidad_grande >= config.MIN_N_RANGO_CONFIABLE:
+            add(f"    Referencia Calidad (n={r.n_calidad_grande}): "
+                f"Humedad prom {r.humedad_prom_calidad}%   AW prom {r.aw_prom_calidad}")
         for regla in r.reglas:
             add(f"      - {regla}")
 

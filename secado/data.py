@@ -34,9 +34,13 @@ def limpiar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     avisos: list[str] = []
     df = df.copy()
 
+    # Filas duplicadas exactas (misma captura repetida)
+    antes = len(df)
+    df = df.drop_duplicates().copy()
+    if len(df) < antes:
+        avisos.append(f"Se eliminaron {antes - len(df)} fila(s) duplicada(s) exacta(s).")
+
     # Numericos: acepta decimales con punto (1.5) o con coma (1,5).
-    # Aplicamos el reemplazo de coma a CUALQUIER columna que no sea ya numerica
-    # (cubre 'object' en pandas <3 y el nuevo 'str' de pandas >=3).
     num_cols = ["peso", "z1", "z2", "z3", "z4", "agua_termo",
                 "z2_extruder", "rate", "humedad", "aw", "hr", "temp_amb"]
     for c in num_cols:
@@ -45,6 +49,10 @@ def limpiar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             s = s.astype(str).str.strip().str.replace(",", ".", regex=False)
             s = s.replace({"": np.nan, "nan": np.nan, "None": np.nan})
         df[c] = pd.to_numeric(s, errors="coerce")
+
+    # Fecha (dia/mes/anio). Si no se puede leer queda NaT y simplemente no se
+    # usa para estimar la sensibilidad entre corridas consecutivas.
+    df["fecha"] = pd.to_datetime(df["fecha_hora"], dayfirst=True, errors="coerce")
 
     # Texto normalizado
     df["producto"] = df["producto"].astype(str).str.strip()
@@ -59,6 +67,25 @@ def limpiar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     if len(df) < antes:
         avisos.append(f"Se ignoraron {antes - len(df)} fila(s) sin lectura de humedad.")
 
+    # Zonas fuera de rango fisico (apagada/en 0/typo): la corrida no representa
+    # una receta normal de 4 zonas y contaminaria las recetas de arranque.
+    zmin, zmax = config.ZONA_MIN_VALIDA, config.ZONA_MAX_VALIDA
+    zonas = df[config.ZONAS]
+    fuera = ((zonas < zmin) | (zonas > zmax) | zonas.isna()).any(axis=1)
+    if fuera.any():
+        solo_z4 = (
+            (df.loc[fuera, "z4"] < zmin)
+            & df.loc[fuera, ["z1", "z2", "z3"]].apply(lambda c: (c >= zmin) & (c <= zmax)).all(axis=1)
+        )
+        n_z4 = int(solo_z4.sum())
+        avisos.append(
+            f"Se excluyeron {int(fuera.sum())} corrida(s) con alguna zona fuera de "
+            f"{zmin}-{zmax}°C: {n_z4} con Zona 4 apagada/baja (operación con 3 zonas) y "
+            f"{int(fuera.sum()) - n_z4} con zonas en 0 o capturas imposibles. "
+            f"No entran a las recetas."
+        )
+        df = df[~fuera].copy()
+
     # Rates sospechosos: aislamos sin borrar la fila (las demas variables sirven)
     sospechosos = df["rate"].notna() & (df["rate"] < config.RATE_MINIMO_VALIDO)
     if sospechosos.any():
@@ -69,6 +96,9 @@ def limpiar(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             f"Ej.: {ejemplos}"
         )
     df["rate_valido"] = df["rate"].where(~sospechosos, np.nan)
+
+    # Promedio de las zonas que se mueven juntas en un ajuste
+    df["z123"] = df[config.ZONAS_AJUSTE].mean(axis=1)
 
     # Banderas de calidad (limites por producto: perro / gato)
     lim = df["producto"].map(config.limites)

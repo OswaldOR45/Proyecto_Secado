@@ -11,6 +11,7 @@ import pandas as pd
 from . import config
 from .analysis import (
     resumen_por_linea, analizar_producto_linea, ajustes_ambientales,
+    sensibilidad_conjunta_global,
 )
 
 # =================================================================================
@@ -390,7 +391,7 @@ body {
 .zona.clave .zona-label { color: var(--amber); }
 .zona.clave .zona-value { color: var(--amber); }
 .zona.clave .zona-label::after {
-  content: " · CLAVE";
+  content: " · AJUSTE";
   font-family: var(--mono);
   font-size: 9px;
 }
@@ -659,8 +660,6 @@ def _fecha_es(d: dt.date | None = None) -> str:
 def _hero(df: pd.DataFrame) -> str:
     hoy = _fecha_es()
     total = len(df)
-    en_rango = int(df["en_rango_h"].sum())
-    pct = round(100 * en_rango / total, 1) if total else 0.0
     return f"""
 <header class="hero">
   <div class="kicker">19 Hermanos Pet Food · Mejora Continua</div>
@@ -669,16 +668,17 @@ def _hero(df: pd.DataFrame) -> str:
   <div class="meta-row">
     <span><b>Generada:</b> {_e(hoy)}</span>
     <span><b>Registros analizados:</b> {_fmt_num(total)}</span>
-    <span><b>Meta de humedad:</b> {config.HUMEDAD_MIN:.0f}–{config.HUMEDAD_MAX:.0f}%</span>
-    <span><b>AW idóneo:</b> {config.AW_MIN_IDONEO}–{config.AW_MAX_IDONEO}</span>
+    <span><b>Objetivo:</b> la mayor humedad posible con AW seguro</span>
+    <span><b>Humedad:</b> {_e(config.texto_meta_humedad())}</span>
+    <span><b>AW:</b> {_e(config.texto_meta_aw())}</span>
   </div>
 </header>"""
 
 
 def _kpi_strip(df: pd.DataFrame) -> str:
     total = len(df)
-    en_rango = int(df["en_rango_h"].sum())
-    pct = round(100 * en_rango / total, 1) if total else 0.0
+    en_meta = int(df["calidad_total"].sum())
+    pct = round(100 * en_meta / total, 1) if total else 0.0
     n_productos = df["producto"].nunique()
     n_lineas = df["linea"].nunique()
     return f"""
@@ -689,8 +689,8 @@ def _kpi_strip(df: pd.DataFrame) -> str:
     <div class="kpi-sub">en {_fmt_num(n_productos)} productos · {_fmt_num(n_lineas)} líneas</div>
   </div>
   <div class="kpi">
-    <div class="kpi-label">En rango de humedad</div>
-    <div class="kpi-value">{_fmt_num(en_rango)}</div>
+    <div class="kpi-label">En meta (humedad + AW)</div>
+    <div class="kpi-value">{_fmt_num(en_meta)}</div>
     <div class="kpi-sub">{pct}% del total</div>
   </div>
   <div class="kpi">
@@ -701,7 +701,7 @@ def _kpi_strip(df: pd.DataFrame) -> str:
   <div class="kpi">
     <div class="kpi-label">AW promedio</div>
     <div class="kpi-value">{df["aw"].mean():.3f}</div>
-    <div class="kpi-sub">idóneo {config.AW_MIN_IDONEO}–{config.AW_MAX_IDONEO}</div>
+    <div class="kpi-sub">límite seguro &lt; {config.AW_MAX_IDONEO}</div>
   </div>
 </section>"""
 
@@ -710,7 +710,7 @@ def _resumen_lineas(df: pd.DataFrame) -> str:
     res = resumen_por_linea(df)
     cards = []
     for _, row in res.iterrows():
-        pct = float(row["% en rango"])
+        pct = float(row["% en meta"])
         prog_class = "" if pct >= 60 else ("med" if pct >= 35 else "bad")
         cards.append(f"""
 <div class="linea-card">
@@ -721,8 +721,8 @@ def _resumen_lineas(df: pd.DataFrame) -> str:
       <div class="linea-progress-fill {prog_class}" style="width:{pct}%"></div>
     </div>
     <div class="linea-progress-label">
-      <span>{_e(row["En rango H"])} en rango · {pct}%</span>
-      <span>meta 100%</span>
+      <span>{_e(row["En meta (H+AW)"])} en meta · {pct}%</span>
+      <span>humedad + AW</span>
     </div>
   </div>
   <div class="linea-stats">
@@ -777,7 +777,7 @@ def _producto_card(r) -> str:
     # zonas: marca la zona clave con clase especial
     zonas_html = []
     for z in config.ZONAS:
-        clave = " clave" if z == r.zona_clave else ""
+        clave = " clave" if z in r.zonas_ajuste else ""
         val = _fmt_num(a.get(z))
         zonas_html.append(f"""
     <div class="zona{clave}">
@@ -790,7 +790,13 @@ def _producto_card(r) -> str:
     reglas_html = []
     for regla in r.reglas:
         cls, tag, txt = "", "", regla
-        if regla.startswith("DONDE:"):
+        if regla.startswith("OBJETIVO:"):
+            tag, txt = "Objetivo", regla[len("OBJETIVO:"):].strip()
+        elif regla.startswith("SI HAY MARGEN:"):
+            tag, txt = "Si hay margen", regla[len("SI HAY MARGEN:"):].strip()
+        elif regla.startswith("SI AW SUBE:"):
+            cls, tag, txt = "alta", "Si AW sube", regla[len("SI AW SUBE:"):].strip()
+        elif regla.startswith("DONDE:"):
             tag, txt = "Dónde", regla[len("DONDE:"):].strip()
         elif regla.startswith("CUANTO:"):
             tag, txt = "Cuánto", regla[len("CUANTO:"):].strip()
@@ -873,37 +879,9 @@ def _producto_card(r) -> str:
         rate_zona_hint_block = f"""
   <div class="rate-hint">
     <span class="rate-hint-label">Rate variable dentro de la corrida:</span>
-    si corres cerca de <b>{h['rate_lo']:,} kg/h</b>, {_e(config.ZONA_NOMBRE[r.zona_clave])} ≈ <b>{h['zona_lo']}°C</b>;
-    si corres cerca de <b>{h['rate_hi']:,} kg/h</b>, ≈ <b>{h['zona_hi']}°C</b>
+    si corres cerca de <b>{h['rate_lo']:,} kg/h</b>, mover {config.ZONAS_AJUSTE_TXT} <b>{h['delta_lo']:+.1f}°C</b> cada una;
+    cerca de <b>{h['rate_hi']:,} kg/h</b>, <b>{h['delta_hi']:+.1f}°C</b>
     <span class="rate-hint-tag">proyectado con el modelo de rate</span>
-  </div>"""
-
-    correccion_block = ""
-    if r.correccion is not None:
-        c = r.correccion
-        if c.get("delta_c") is not None:
-            conflicto_txt = (
-                '<div class="corr-conflicto">⚠ Humedad y AW pedían sentidos opuestos — se priorizó AW.</div>'
-                if c["conflicto"] else ""
-            )
-            correccion_block = f"""
-  <div class="correccion-box">
-    <div class="correccion-head">Receta ajustada <span class="correccion-pill">proyección, no validada</span></div>
-    <div class="correccion-body">
-      {c['direccion']} <b>{_e(c['zona_nombre'])}</b> de <b>{c['valor_original']}</b> a
-      <b>{c['valor_corregido']}</b> ({c['delta_c']:+.1f}°C) — criterio: {_e(c['criterio'])}
-      {conflicto_txt}
-      <div class="correccion-proyeccion">
-        Con este ajuste se proyecta: Humedad ≈ <b>{c['humedad_proyectada']}%</b> ·
-        AW ≈ <b>{c['aw_proyectada']}</b>
-      </div>
-    </div>
-  </div>"""
-        else:
-            correccion_block = f"""
-  <div class="correccion-box correccion-sin-modelo">
-    <div class="correccion-head">Esperado fuera de meta</div>
-    <div class="correccion-body">{_e(c['motivo'])}</div>
   </div>"""
 
     return f"""
@@ -920,7 +898,8 @@ def _producto_card(r) -> str:
     <span class="conf-tag {conf_class}">{_e(r.confiabilidad)}</span>
   </div>
   <div class="prod-meta" style="padding-top:0;">
-    <span style="color:var(--ink-muted)">Zona clave desde: <b style="color:var(--ink)">{_e(r.fuente_zona)}</b></span>
+    <span style="color:var(--ink-muted)">Meta humedad: <b style="color:var(--ink)">{_e(config.texto_meta_humedad(r.producto))}</b></span>
+    <span style="color:var(--ink-muted)">Ajuste {config.ZONAS_AJUSTE_TXT} juntas: <b style="color:var(--ink)">~{r.sens_conjunta:.0f}°C por 1% de humedad</b> · AW +{r.aw_por_pct:.3f} por 1%</span>
     {f'<span style="color:var(--ink-muted)">Ref. Calidad (n={r.n_calidad_grande}): H <b style="color:var(--ink)">{r.humedad_prom_calidad}%</b> · AW <b style="color:var(--ink)">{r.aw_prom_calidad}</b></span>' if r.n_calidad_grande >= config.MIN_N_RANGO_CONFIABLE else ''}
   </div>
   <div class="zonas">{zonas_block}</div>
@@ -945,7 +924,6 @@ def _producto_card(r) -> str:
     </div>
   </div>
   {rate_zona_hint_block}
-  {correccion_block}
   <div class="reglas">
     {aviso_si_orientativo}
     {"".join(reglas_html)}
@@ -959,16 +937,17 @@ def _producto_card(r) -> str:
 
 def _productos(df: pd.DataFrame, quemador_df=None, calidad_df=None) -> str:
     cards = []
+    sens_global = sensibilidad_conjunta_global(df)
     # Ordenar: por producto, luego por linea (L1 antes que L2)
     for (producto, linea), g in sorted(df.groupby(["producto", "linea"])):
-        r = analizar_producto_linea(g, producto, linea, quemador_df, calidad_df)
+        r = analizar_producto_linea(g, producto, linea, quemador_df, calidad_df, sens_global=sens_global)
         cards.append(_producto_card(r))
     return f"""
 <section class="section">
   <div class="section-head">
     <span class="section-num">§ 02</span>
     <h2 class="section-title">Tarjetas de arranque por producto y línea</h2>
-    <span class="section-note">Mediana de corridas en rango · zona clave marcada</span>
+    <span class="section-note">Mediana de corridas en meta · zonas que se ajustan juntas marcadas</span>
   </div>
   <div class="producto-grid">{"".join(cards)}</div>
 </section>"""
@@ -976,8 +955,9 @@ def _productos(df: pd.DataFrame, quemador_df=None, calidad_df=None) -> str:
 
 def _ambientales(df: pd.DataFrame) -> str:
     cards = []
+    sens_global = sensibilidad_conjunta_global(df)
     for linea in sorted(df["linea"].unique()):
-        amb = ajustes_ambientales(df, linea)
+        amb = ajustes_ambientales(df, linea, sens_global=sens_global)
         tabla = amb["tabla"]
         if len(tabla) == 0:
             rows = '<tr><td colspan="5" style="color:var(--ink-muted)">Sin datos ambientales suficientes</td></tr>'
